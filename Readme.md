@@ -139,22 +139,13 @@ The following instructions are meant to be executed on the latest version of [Ka
 
 `git clone https://github.com/nicholasaleks/Damn-Vulnerable-Drone.git && cd Damn-Vulnerable-Drone`
 
-## Build / Pull Docker Images
-
-`docker compose build`
-
-If you’d rather download the ready-made images (which tends to be faster than local builds), run the following command to pull all Damn Vulnerable Drone images from Docker Hub:
+## Pull or Build Docker Images
 
 `docker compose pull`
 
-or pulling individual Damn Vulnerable Drone images using the following:
+If you’d rather build the images (which tends to be slower than pulling), run the following command to build all Damn Vulnerable Drone images from source:
 
-```
-docker pull n1ckaleks/damn-vulnerable-drone-flight-controller:latest
-docker pull n1ckaleks/damn-vulnerable-drone-simulator:latest
-docker pull n1ckaleks/damn-vulnerable-drone-companion-computer:latest
-docker pull n1ckaleks/damn-vulnerable-drone-ground-control-station:latest
-```
+`docker compose build`
 
 ## Operating Damn Vulnerable Drone
 
