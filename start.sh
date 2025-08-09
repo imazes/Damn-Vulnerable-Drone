@@ -54,12 +54,12 @@ show_help() {
     echo "Start the Damn Vulnerable Drone simulator."
     echo ""
     echo "Options:"
-    echo "  --wifi      Start the simulation with a virtual drone Wi-Fi network."
+    echo "  --wifi [wpa2|wep]     Start the simulation with a virtual drone Wi-Fi network."
     echo "  --no-wifi   Start the simulation with instant access to the drone network (default)."
     echo "  -h, --help  Display this help and exit."
     echo ""
     echo "Example:"
-    echo "  sudo $0 --wifi      # Starts with virtual Wi-Fi"
+    echo "  sudo $0 --wifi wpa2      # Starts with virtual Wi-Fi"
     echo "  sudo $0 --no-wifi   # Starts without virtual Wi-Fi"
 }
 
@@ -81,14 +81,21 @@ fi
 
 # Default value for wifi_simulation if no argument is provided
 wifi_simulation=""
+wifi_mode=""
 
 # Process command-line arguments
-for arg in "$@"
+while [[ $# -gt 0 ]];
 do
-    case $arg in
+    case $1 in
         --wifi)
         wifi_simulation="y"
-        shift # Remove --wifi from processing
+        wifi_mode="$2"
+         # Validate that user provided an argument for --wifi
+        if [[ -z "$wifi_mode" || "$wifi_mode" =~ ^- ]]; then
+            echo "Error: You must specify a Wi-Fi mode after --wifi (wpa2 or wep)"
+            exit 1
+        fi
+        shift 2
         ;;
         --no-wifi)
         wifi_simulation="n"
@@ -188,6 +195,15 @@ if [ -z "$wifi_simulation" ]; then
     if [ "$OS_ID" = "kali" ]; then
         echo "Do you want to start the simulation with a virtual drone Wi-Fi network? By selecting 'No' you will start the simulation with instant access to the drone network. (Enter 'y (Yes)' or 'n (No)'): "
         read wifi_simulation
+        if [[ "$wifi_simulation" =~ ^[Yy]$ ]]; then
+            echo "What Wi-Fi mode do you want to simulate? (Enter 'wep' or 'wpa2'): "
+            read wifi_mode
+            wifi_mode=$(echo "$wifi_mode" | tr '[:upper:]' '[:lower:]')
+            if [[ "$wifi_mode" != "wep" && "$wifi_mode" != "wpa2" ]]; then
+                echo "Invalid Wi-Fi mode: $wifi_mode. Please enter 'wep' or 'wpa2'."
+                exit 1
+            fi
+        fi
     else
         echo -e "${RED}Warning: You are not running on Kali Linux!"
         echo -e "${RED}Non-Kali Linux systems have not been tested with the start.sh script."
@@ -311,6 +327,23 @@ if [ "$wifi_simulation" = "y" ]; then
         # CC Access Point Setup
         echo -e "${CYAN}[+] Setting up Access Point on Companion Computer...${NC}"
         
+        # WEP or WPA2
+
+
+        if [ "$wifi_mode" = "wpa2" ]; then
+            echo "[+] Copying WPA2 config into companion-computer & GCS container..."
+            docker cp companion-computer/conf/hostapd_wpa2.conf companion-computer:/etc/hostapd.conf
+            docker cp ground-control-station/conf/wpa_supplicant_wpa2.conf ground-control-station:/etc/wpa_supplicant/wpa_supplicant.conf
+        elif [ "$wifi_mode" = "wep" ]; then
+            echo "[+] Copying WEP config into companion-computer & GCS container..."
+            docker cp companion-computer/conf/hostapd_wep.conf companion-computer:/etc/hostapd.conf
+            docker cp ground-control-station/conf/wpa_supplicant_wep.conf ground-control-station:/etc/wpa_supplicant/wpa_supplicant.conf
+        else
+            echo "[!] Invalid Wi-Fi mode: $wifi_mode"
+            echo "[!] Valid modes: wpa2 | wep"
+            exit 1
+        fi
+
         # Execute multiple commands in the companion-computer container
         docker exec companion-computer sh -c '
         # Set IP address for companion computer
