@@ -214,9 +214,9 @@ if [[ "${sim_mode}" == "full" ]] && ! gpu_ok; then
     echo "GPU runtime not detected (need NVIDIA drivers + nvidia-docker). Warning you may experience performance issues."
     read -rp "Fall back to Lite mode? [Y/n]: " fb
     if [[ ! "${fb:-Y}" =~ ^[Yy]$ ]]; then
-        sim_mode="full"
+        sim_mode="lite"
     fi
-    sim_mode="lite"
+    sim_mode="full"
 fi
 
 # Derive Compose profile and service names
