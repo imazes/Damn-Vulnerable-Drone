@@ -54,13 +54,12 @@ show_help() {
     echo "Start the Damn Vulnerable Drone simulator."
     echo ""
     echo "Options:"
+    echo "  --mode [full|lite]    Choose simulator mode:"
+    echo "                         - full:[default] 3D environment (GPU + drivers required)"
+    echo "                         - lite: no GPU, minimal requirements"
     echo "  --wifi [wpa2|wep]     Start the simulation with a virtual drone Wi-Fi network."
-    echo "  --no-wifi   Start the simulation with instant access to the drone network (default)."
-    echo "  -h, --help  Display this help and exit."
-    echo ""
-    echo "Example:"
-    echo "  sudo $0 --wifi wpa2      # Starts with virtual Wi-Fi"
-    echo "  sudo $0 --no-wifi   # Starts without virtual Wi-Fi"
+    echo "  --no-wifi             Start without virtual Wi-Fi (instant access)."
+    echo "  -h, --help            Display this help and exit."
 }
 
 check_virtual_interface() {
@@ -79,40 +78,41 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Default value for wifi_simulation if no argument is provided
+# Default arguments
 wifi_simulation=""
 wifi_mode=""
+sim_mode=""
 
 # Process command-line arguments
 while [[ $# -gt 0 ]];
 do
     case $1 in
+        --mode)
+            sim_mode="${2:-}"
+            if [[ -z "${sim_mode}" || ! "${sim_mode}" =~ ^(lite|full)$ ]]; then
+                echo "Error: --mode must be 'lite' or 'full'"
+                exit 1
+            fi
+            shift 2
+        ;;
         --wifi)
-        wifi_simulation="y"
-        wifi_mode="$2"
-         # Validate that user provided an argument for --wifi
-        if [[ -z "$wifi_mode" || "$wifi_mode" =~ ^- ]]; then
-            echo "Error: You must specify a Wi-Fi mode after --wifi (wpa2 or wep)"
-            exit 1
-        fi
-        shift 2
+            ...
         ;;
         --no-wifi)
-        wifi_simulation="n"
-        shift # Remove --no-wifi from processing
+            ...
         ;;
         -h|--help)
-        show_help
-        exit 0
+            show_help
+            exit 0
         ;;
         *)
-        # Unknown option
-        echo "Unknown option: $arg"
-        show_help
-        exit 1
+            echo "Unknown option: $1"
+            show_help
+            exit 1
         ;;
     esac
 done
+
 
 # Check if a card is virtual
 check_virtual_interface() {
@@ -123,6 +123,13 @@ check_virtual_interface() {
     else
         return 0
     fi
+}
+
+# Helper: check GPU availability for FULL mode
+gpu_ok() {
+    command -v nvidia-smi >/dev/null 2>&1 || return 1
+    docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"' || return 1
+    return 0
 }
 
 # Clean up
@@ -189,6 +196,42 @@ OS_ID=$(grep ^ID= /etc/os-release 2>/dev/null | cut -d= -f2)
 
 # Remove quotes if they exist
 OS_ID=${OS_ID//\"/}
+
+# If not provided via --mode, ask the user (default to lite)
+if [[ -z "${sim_mode}" ]]; then
+    echo "Select simulator mode:"
+    echo "  [1] Lite (no GPU, minimal requirements)"
+    echo "  [2] Full (3D, GPU required)"
+    read -rp "Enter 1 or 2 [default: 1]: " mode_choice
+    case "${mode_choice:-1}" in
+        2) sim_mode="full" ;;
+        *) sim_mode="lite" ;;
+    esac
+fi
+
+# If FULL selected but no GPU, offer fallback
+if [[ "${sim_mode}" == "full" ]] && ! gpu_ok; then
+    echo "GPU runtime not detected (need NVIDIA drivers + nvidia-docker)."
+    read -rp "Fall back to Lite mode? [Y/n]: " fb
+    if [[ ! "${fb:-Y}" =~ ^[Yy]$ ]]; then
+        echo "Aborting. Please configure GPU and try again."
+        exit 1
+    fi
+    sim_mode="lite"
+fi
+
+# Derive Compose profile and service names
+if [[ "${sim_mode}" == "lite" ]]; then
+    PROFILE_ARG=(--profile lite)
+    CC_SVC="companion-computer-lite"
+    GCS_SVC="ground-control-station-lite"
+    SIM_SVC="simulator-lite"
+else
+    PROFILE_ARG=(--profile full)
+    CC_SVC="companion-computer"
+    GCS_SVC="ground-control-station"
+    SIM_SVC="simulator"
+fi
 
 # Only ask if wifi_simulation was not set by command-line arguments
 if [ -z "$wifi_simulation" ]; then
@@ -275,11 +318,11 @@ if [ "$wifi_simulation" = "y" ]; then
         done
 
         # Start Docker Compose
-        echo -e "${CYAN}[+] Starting Docker Compose...${NC}"
-        docker compose up -d
+        echo -e "${CYAN}[+] Starting Docker Compose (mode: ${sim_mode})...${NC}"
+        docker compose "${PROFILE_ARG[@]}" up -d
 
         echo -e "${CYAN}[+] Fetching Docker Compose logs...${NC}"
-        docker compose logs -f &
+        docker compose logs -f "$SIM_SVC" "$CC_SVC" "$GCS_SVC" &
 
         # Wait for Docker containers to start up
         # Check for Docker containers readiness
@@ -289,7 +332,7 @@ if [ "$wifi_simulation" = "y" ]; then
 
         while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
             echo -e "${CYAN}[+] Checking if Docker containers are ready (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)...${NC}"
-            if docker ps | grep -q 'companion-computer' && docker ps | grep -q 'ground-control-station'; then
+            if docker ps | grep -q "$CC_SVC" && docker ps | grep -q "$GCS_SVC"; then
                 echo -e "${CYAN}[+] Docker containers are ready.${NC}"
                 break
             else
@@ -312,14 +355,14 @@ if [ "$wifi_simulation" = "y" ]; then
 
         # Companion Computer gets the next interface
         companion_computer_interface=$(increment_interface_number "$first_virtual_card_name")
-        CC_PID=$(docker inspect --format '{{ .State.Pid }}' companion-computer)
+        CC_PID=$(docker inspect --format '{{ .State.Pid }}' "$CC_SVC")
         CC_PHY_INTERFACE=$(iw dev | awk '/phy#/{phy=$0} /Interface '"$companion_computer_interface"'/{print phy; exit}')
         CC_PHY_INTERFACE=$(echo "$CC_PHY_INTERFACE" | awk -F'#' '{print "phy"$2}')
         sudo iw phy "$CC_PHY_INTERFACE" set netns "$CC_PID"
 
         # Ground Control Station gets the next interface
         gcs_interface=$(increment_interface_number "$companion_computer_interface")
-        GCS_PID=$(docker inspect --format '{{ .State.Pid }}' ground-control-station)
+        GCS_PID=$(docker inspect --format '{{ .State.Pid }}' "$GCS_SVC")
         GCS_PHY_INTERFACE=$(iw dev | awk '/phy#/{phy=$0} /Interface '"$gcs_interface"'/{print phy; exit}')
         GCS_PHY_INTERFACE=$(echo $GCS_PHY_INTERFACE | awk -F'#' '{print "phy"$2}')
         sudo iw phy $GCS_PHY_INTERFACE set netns $GCS_PID
@@ -332,11 +375,11 @@ if [ "$wifi_simulation" = "y" ]; then
         if [ "$wifi_mode" = "wpa2" ]; then
             echo "[+] Copying WPA2 config into companion-computer & GCS container..."
             export WIFI_MODE="wpa2"
-            docker cp companion-computer/conf/hostapd_wpa2.conf companion-computer:/etc/hostapd.conf
+            docker cp companion-computer/conf/hostapd_wpa2.conf "$CC_SVC":/etc/hostapd.conf
         elif [ "$wifi_mode" = "wep" ]; then
             echo "[+] Copying WEP config into companion-computer & GCS container..."
             unset WIFI_MODE
-            docker cp companion-computer/conf/hostapd_wep.conf companion-computer:/etc/hostapd.conf
+            docker cp companion-computer/conf/hostapd_wep.conf "$CC_SVC":/etc/hostapd.conf
         else
             echo "[!] Invalid Wi-Fi mode: $wifi_mode"
             echo "[!] Valid modes: wpa2 | wep"
@@ -344,7 +387,7 @@ if [ "$wifi_simulation" = "y" ]; then
         fi
 
         # Execute multiple commands in the companion-computer container
-        docker exec companion-computer sh -c '
+        docker exec "$CC_SVC" sh -c '
         # Set IP address for companion computer
         ip a a 192.168.13.1/24 dev '"$companion_computer_interface"' &&
         echo "[companion-computer] IP address set for '"$companion_computer_interface"'" ||
@@ -400,7 +443,7 @@ if [ "$wifi_simulation" = "y" ]; then
         echo -e "${CYAN}[+] Setting up Ground Control Station Access Point...${NC}"
 
         # Execute commands in the ground-control-station container
-        docker exec ground-control-station sh -c "
+        docker exec "$GCS_SVC" sh -c "
             wpa_supplicant -B -i '"$gcs_interface"' -c /etc/wpa_supplicant/wpa_supplicant.conf -D nl80211;
             ip addr add 192.168.13.14/24 dev '"$gcs_interface"';
             ip route add default via 192.168.13.1 dev '"$gcs_interface"';
@@ -447,6 +490,7 @@ echo """
         echo -e "${CYAN}------------------------------------------------------"
         echo -e "${CYAN}[+] Build Complete."
         echo -e "${CYAN}[+] Version: ${version}"
+        echo -e "${CYAN}[+] Mode: ${sim_mode^^}"
         echo -e "${CYAN}------------------------------------------------------"
         echo -e "${CYAN}[+] - Virtual interface ${first_virtual_card_name}mon put into monitoring mode."
         echo -e "${CYAN}[+] - Virtual interface ${kali_interface} is available for regular wifi networking."
@@ -465,9 +509,9 @@ elif [ "$wifi_simulation" = "n" ]; then
     LOG_FILE="dvd.log"
     {
         echo -e "${CYAN}Starting simulation assuming drone network connectivity access..."
-        echo -e "${CYAN}[+] Starting Docker Compose...${NC}"
-        docker compose up -d
-        docker compose logs -f &
+        echo -e "${CYAN}[+] Starting Docker Compose (mode: ${sim_mode})...${NC}"
+        docker compose "${PROFILE_ARG[@]}" up -d
+        docker compose logs -f "$SIM_SVC" "$CC_SVC" "$GCS_SVC" &
         echo """
 .--------------------------------------------------------------------------------.
          .###+             .#####               ####+             .####          
@@ -508,6 +552,7 @@ elif [ "$wifi_simulation" = "n" ]; then
         echo -e "${CYAN}------------------------------------------------------"
         echo -e "${CYAN}[+] Build Complete."
         echo -e "${CYAN}[+] Version: ${version}"
+        echo -e "${CYAN}[+] Mode: ${sim_mode^^}"
         echo -e "${CYAN}------------------------------------------------------"
         echo -e "${CYAN}[+] Damn Vulnerable Drone Lab Environment is running..."
         echo -e "${CYAN}[+] Log file: dvd.log"
