@@ -1,5 +1,6 @@
 services:
   flight-controller:
+    profiles: ["full"]
     image: n1ckaleks/damn-vulnerable-drone-flight-controller:latest
     container_name: flight-controller
     privileged: true
@@ -13,6 +14,7 @@ services:
         ipv4_address: 10.13.0.2
 
   companion-computer:
+    profiles: ["full"]
     image: n1ckaleks/damn-vulnerable-drone-companion-computer:latest
     container_name: companion-computer
     privileged: true
@@ -34,6 +36,7 @@ services:
         ipv4_address: 10.13.0.3
 
   ground-control-station:
+    profiles: ["full"]
     image: n1ckaleks/damn-vulnerable-drone-ground-control-station:latest
     container_name: ground-control-station
     privileged: true
@@ -60,6 +63,7 @@ services:
         ipv4_address: 10.13.0.4
 
   simulator:
+    profiles: ["full"]
     image: n1ckaleks/damn-vulnerable-drone-simulator:latest
     container_name: simulator
     privileged: true
@@ -78,6 +82,103 @@ services:
       - ./simulator/mgmt:/Simulator/mgmt
     environment:
       - WIFI_ENABLED
+      - LITE=false
+    networks:
+      simulator:
+        ipv4_address: 10.13.0.5
+
+
+##########################################
+##           LITE CONTAINERS            ##
+##########################################
+
+  flight-controller-lite:
+    profiles: ["lite"]
+    image: n1ckaleks/damn-vulnerable-drone-flight-controller-lite:latest
+    container_name: flight-controller-lite
+    privileged: true
+    build:
+      context: .
+      dockerfile: ./flight-controller/lite/Dockerfile
+    volumes:
+      - serial-uart-socket:/sockets
+    environment:
+      - LITE=true
+    networks:
+      simulator:
+        ipv4_address: 10.13.0.2
+
+  companion-computer-lite:
+    profiles: ["lite"]
+    image: n1ckaleks/damn-vulnerable-drone-companion-computer-lite:latest
+    container_name: companion-computer-lite
+    privileged: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "3000:3000"
+    build:
+      context: .
+      dockerfile: ./companion-computer/lite/Dockerfile
+    depends_on:
+      - flight-controller-lite
+    volumes:
+      - serial-uart-socket:/sockets
+    environment:
+      - LITE=true
+      - WIFI_ENABLED
+    networks:
+      simulator:
+        ipv4_address: 10.13.0.3
+
+  ground-control-station-lite:
+    profiles: ["lite"]
+    image: n1ckaleks/damn-vulnerable-drone-ground-control-station-lite:latest
+    container_name: ground-control-station-lite
+    privileged: true
+    environment:
+      - LITE=true
+      - WIFI_MODE
+      - DISPLAY=${DISPLAY}
+      - QT_NO_MITSHM=1
+      - XDG_RUNTIME_DIR=/tmp
+      - XAUTHORITY=/home/gcs/.Xauthority
+      - HEADLESS=0
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/home/gcs/.Xauthority:ro
+      - /etc/machine-id:/etc/machine-id:ro
+    devices:
+      - /dev/dri:/dev/dri
+    build:
+      context: .
+      dockerfile: ./ground-control-station/lite/Dockerfile
+    depends_on:
+      - companion-computer-lite
+    networks:
+      simulator:
+        ipv4_address: 10.13.0.4
+
+  simulator-lite:
+    profiles: ["lite"]
+    container_name: simulator-lite
+    build:
+      context: .
+      dockerfile: ./simulator/lite/Dockerfile
+    image: n1ckaleks/damn-vulnerable-drone-simulator-lite:latest
+    privileged: true
+    environment:
+      - LITE=true
+      - MAV2REST_URL=http://10.13.0.3:3000
+      - COMPANION_WS_URL=ws://10.13.0.3:3000/socket
+      # Optional: adjust for your mavlink2rest message path
+      # - MAV2REST_POS_PATH=/mavlink/2/messages/GLOBAL_POSITION_INT
+    volumes:
+      # mount mgmt code from parent folder for live dev
+      - ./simulator/mgmt:/app/simulator/mgmt
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"   # mgmt UI with Leaflet map in LITE mode
     networks:
       simulator:
         ipv4_address: 10.13.0.5
