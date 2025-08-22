@@ -1,13 +1,41 @@
-from flask import make_response
+# simulator/mgmt/routes/gcs.py
+from flask import make_response, request
 from docker.errors import NotFound
 from . import bp
 from .utils import get_container
-from shlex import quote
 
-TIMEOUT_SECS = 6
+GUIDE_URL = "https://github.com/nicholasaleks/Damn-Vulnerable-Drone/wiki/Running-QGround-Control-from-Apple-Silicon-(arm64)-hosts"
+
+def _is_macos_request() -> bool:
+    """
+    Best-effort detection of macOS client:
+      - Prefer UA client hint:  Sec-CH-UA-Platform: "macOS"
+      - Fallback to classic User-Agent tokens (avoid iOS false-positives)
+    """
+    platform_hint = (request.headers.get("sec-ch-ua-platform") or "").strip('"').lower()
+    if platform_hint in {"macos", "mac os x"}:
+        return True
+
+    ua = (request.user_agent.string or "").lower()
+    if any(tok in ua for tok in ("iphone", "ipad", "ipod")):
+        return False  # iOS often includes "like Mac OS X"
+    return (
+        request.user_agent.platform == "macos"
+        or "macintosh" in ua
+        or "mac os x" in ua
+    )
 
 @bp.route("/qgc", methods=["POST"])
 def open_qgc():
+    # Auto-fail for macOS browsers (use local QGC per guide)
+    if _is_macos_request():
+        msg = (
+            "Failed to Launch QGroundControl\n\n"
+            "Detected macOS client. This launch path is not supported on macOS.\n"
+            f"To deploy a local instance of QGroundControl, review:\n{GUIDE_URL}"
+        )
+        return make_response(msg, 400)
+
     container_name = "ground-control-station"
     script_path = "/usr/local/bin/launch_qgc.sh"
 
@@ -16,7 +44,6 @@ def open_qgc():
         if container.status != "running":
             return make_response(f"Container {container_name} is not running (status: {container.status})", 400)
 
-        # quick checks
         for test_cmd, error_txt in [
             (f'test -f "{script_path}"', "Script not found"),
             (f'test -x "{script_path}"', "Script is not executable"),
@@ -25,37 +52,16 @@ def open_qgc():
             if rc != 0:
                 return make_response(f"{error_txt}: {script_path}", 400)
 
-        # Run with a 6s timeout (prefers GNU coreutils 'timeout', then busybox timeout,
-        # else manual kill after 6s). Return 124 when we enforced the timeout.
-        cmd = (
-            "sh -lc '"
-            "if command -v timeout >/dev/null 2>&1; then "
-            f"  timeout -k 1s {TIMEOUT_SECS}s {quote(script_path)}; "
-            "elif command -v busybox >/dev/null 2>&1; then "
-            f"  busybox timeout -t {TIMEOUT_SECS} {quote(script_path)}; "
-            "else "
-            f"  ({quote(script_path)} & pid=$!; "
-            f"   (sleep {TIMEOUT_SECS}; kill -TERM $pid 2>/dev/null; sleep 1; kill -KILL $pid 2>/dev/null; exit 124) & "
-            "   wait $pid"
-            "  ); "
-            "fi'"
-        )
+        exec_result = container.exec_run(script_path, user="gcs")
+        output = exec_result.output.decode(errors="ignore").strip()
 
-        exec_result = container.exec_run(cmd, user="gcs")
-        output = (exec_result.output or b"").decode(errors="ignore").strip()
-        code = exec_result.exit_code
-
-        if code == 0:
+        if exec_result.exit_code == 0:
             return make_response(f"Success:\n{output}", 200)
-        elif code == 124:
-            # 124 is the standard timeout exit code
-            return make_response("Timed out after 6s while launching QGroundControl.", 408)
         else:
             return make_response(
-                f"Command failed with exit code {code}:\n{output}",
+                f"Command failed with exit code {exec_result.exit_code}:\n{output}",
                 400,
             )
-
     except NotFound:
         return make_response(f"Container not found: {container_name}", 400)
     except Exception as e:
