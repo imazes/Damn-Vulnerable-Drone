@@ -109,113 +109,100 @@
         }
       }
   
-      // QGC modal + launch logic
       const launchBtn = document.getElementById('open_qgc');
-      const modalEl = document.getElementById('qgcModal');
-      const modal = new bootstrap.Modal(modalEl);
-      const cancelBtn = document.getElementById('qgcCancel');
-      const closeXBtn = document.getElementById('qgcModalCloseX');
-  
-      let controller = null;   // AbortController
-      let inFlight = false;
+      let controller = null;
+      let timeoutId = null;
+      const LAUNCH_TIMEOUT_MS = 20000; // hard cap to avoid “hang”
   
       function setBusy(busy) {
-        inFlight = busy;
         launchBtn.disabled = busy;
-        cancelBtn.disabled = !busy; // allow cancel only if busy
       }
   
-      function abortIfNeeded() {
+      function abortIfNeeded(reason) {
         if (controller) {
           controller.abort();
           controller = null;
         }
+        clearTimeout(timeoutId);
         setBusy(false);
+  
+        if (reason === 'user') {
+          Swal.fire({ title: "Launch canceled", icon: "info", timer: 1200, showConfirmButton: false });
+        } else if (reason === 'timeout') {
+          Swal.fire({
+            title: "Launch timed out",
+            html: "No response within 20s. Check the GCS container logs (e.g., <code>/tmp/qgc.launch.log</code>).",
+            icon: "warning"
+          });
+        }
       }
   
       async function launchQGC() {
-        // show modal and start request
         controller = new AbortController();
         setBusy(true);
-        modal.show();
+  
+        // Open loading swal (cancelable + close button + ESC)
+        const swalp = Swal.fire({
+          title: "Launching QGroundControl…",
+          html: "<small class='text-muted'>This can take a moment. You can cancel anytime.</small>",
+          allowOutsideClick: false,
+          allowEscapeKey: true,
+          showConfirmButton: false,
+          showCancelButton: true,
+          cancelButtonText: "Cancel",
+          showCloseButton: true,
+          didOpen: () => { Swal.showLoading(); }
+        }).then((result) => {
+          // User clicked Cancel/X/ESC
+          if (result.dismiss === Swal.DismissReason.cancel ||
+              result.dismiss === Swal.DismissReason.close ||
+              result.dismiss === Swal.DismissReason.esc) {
+            abortIfNeeded('user');
+          }
+        });
+  
+        // Safety timeout so the UI can’t hang forever
+        timeoutId = setTimeout(() => {
+          Swal.close();            // close spinner
+          abortIfNeeded('timeout'); // abort fetch & notify
+        }, LAUNCH_TIMEOUT_MS);
   
         try {
-          const resp = await fetch('/qgc', {
-            method: 'POST',
-            signal: controller.signal
-          });
+          const resp = await fetch('/qgc', { method: 'POST', signal: controller.signal });
   
-          // done: hide modal and report
-          modal.hide();
+          clearTimeout(timeoutId);
+          controller = null;
           setBusy(false);
+          Swal.close(); // close loading
   
           if (resp.ok) {
-            // Optional: toast/success
-            if (typeof Swal !== 'undefined') {
-              Swal.fire({
-                title: "QGroundControl launched",
-                icon: "success",
-                timer: 1600,
-                showConfirmButton: false
-              });
-            } else {
-              console.log('QGroundControl launched:', resp);
-            }
+            Swal.fire({ title: "QGroundControl launched", icon: "success", timer: 1600, showConfirmButton: false });
           } else {
-            if (typeof Swal !== 'undefined') {
-              Swal.fire({
-                title: "Failed to Launch QGroundControl",
-                html: "Your system's architecture may not be supported by QGroundControl. To deploy a local instance, follow <a href='https://github.com/nicholasaleks/Damn-Vulnerable-Drone/wiki/Running-QGround-Control-from-Apple-Silicon-(arm64)-hosts' target='_blank'>this guide</a>.",
-                icon: "error",
-                confirmButtonColor: '#d33',
-                confirmButtonText: "OK"
-              });
-            } else {
-              console.error('Error launching QGroundControl');
-            }
+            const text = await resp.text().catch(() => "");
+            Swal.fire({
+              title: "Failed to Launch QGroundControl",
+              html: text
+                ? `<pre style="text-align:left;white-space:pre-wrap">${text.replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>`
+                : "Your system's architecture may not be supported by QGroundControl. To deploy a local instance, follow <a href='https://github.com/nicholasaleks/Damn-Vulnerable-Drone/wiki/Running-QGround-Control-from-Apple-Silicon-(arm64)-hosts' target='_blank'>this guide</a>.",
+              icon: "error",
+              confirmButtonColor: "#d33",
+              confirmButtonText: "OK"
+            });
           }
         } catch (err) {
-          // aborted vs real error
-          setBusy(false);
-          modal.hide();
-  
-          if (err.name === 'AbortError') {
-            if (typeof Swal !== 'undefined') {
-              Swal.fire({
-                title: "Launch canceled",
-                icon: "info",
-                timer: 1200,
-                showConfirmButton: false
-              });
-            } else {
-              console.log('QGC launch canceled');
-            }
-          } else {
-            if (typeof Swal !== 'undefined') {
-              Swal.fire({
-                title: "Unexpected error",
-                text: String(err),
-                icon: "error"
-              });
-            } else {
-              console.error('Error:', err);
-            }
-          }
-        } finally {
+          clearTimeout(timeoutId);
           controller = null;
+          setBusy(false);
+  
+          // If user canceled, we already showed a toast in abortIfNeeded
+          if (err.name !== 'AbortError') {
+            Swal.close();
+            Swal.fire({ title: "Unexpected error", text: String(err), icon: "error" });
+          }
         }
       }
   
       launchBtn.addEventListener('click', launchQGC);
-  
-      // Cancel via button or the X
-      cancelBtn.addEventListener('click', abortIfNeeded);
-      closeXBtn.addEventListener('click', abortIfNeeded);
-  
-      // If user dismisses modal any other way, still abort
-      modalEl.addEventListener('hidden.bs.modal', () => {
-        if (inFlight) abortIfNeeded();
-      });
     });
   </script>
 {% endblock %}
