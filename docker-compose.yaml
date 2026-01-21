@@ -58,6 +58,8 @@ services:
     networks:
       simulator:
         ipv4_address: 10.13.0.4
+    ports:
+      - "14550:14550/udp" # QGroundControl
 
   simulator:
     image: n1ckaleks/damn-vulnerable-drone-simulator:latest

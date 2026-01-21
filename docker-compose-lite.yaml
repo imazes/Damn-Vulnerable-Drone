@@ -62,6 +62,8 @@ services:
     networks:
       simulator:
         ipv4_address: 10.13.0.4
+    ports:
+      - "14550:14550/udp" # QGroundControl
 
   simulator-lite:
     container_name: simulator-lite
