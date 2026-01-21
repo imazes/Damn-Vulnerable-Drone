@@ -1,0 +1,4 @@
+#/bin/bash
+bash /opt/damn/Damn-Vulnerable-Drone/start.lite.with.root.sh &
+
+
