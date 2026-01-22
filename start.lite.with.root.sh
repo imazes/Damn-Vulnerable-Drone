@@ -1,5 +1,5 @@
 #!/bin/bash
-# set -x
+set -e
 cd "$(dirname "$0")"
 
 export DISPLAY=:0
@@ -11,6 +11,7 @@ GCS_SVC="ground-control-station-lite"
 SIM_SVC="simulator-lite"
 ./stop.sh
 # ./start.sh --no-wifi
+docker compose -f docker-compose-lite.yaml build
 docker compose -f docker-compose-lite.yaml up -d
 docker compose -f docker-compose-lite.yaml logs -f "$SIM_SVC" "$CC_SVC" "$GCS_SVC" 2>&1 > dvd.log &
 tail -f dvd.log
