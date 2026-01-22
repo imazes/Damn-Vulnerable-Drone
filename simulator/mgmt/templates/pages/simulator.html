@@ -178,7 +178,9 @@
   (function () {
     // ---------- constants ----------
     <!-- const CC_URL = "http://localhost:3000";   // Companion Socket.IO origin -->
-    const CC_URL = "http://damn.lan:3000";   // Companion Socket.IO origin
+    <!-- const CC_URL = "http://damn.lan:3000";   // Companion Socket.IO origin -->
+    <!-- 尝试自动生成 -->
+    const CC_URL = window.location.origin.replace(window.location.port, '3000');   // Companion Socket.IO origin
     const IMG_DIR = "/static/images";         // FIJS images directory (no trailing slash)
     const defaultLat = 37.241861, defaultLon = -115.796917, defaultZoom = 15;
 
@@ -414,24 +416,25 @@
 </script>
 {% endif %}
 
+<!-- 注销掉host检查 -->
 <!-- Optional origin guard -->
-<script>
-  document.addEventListener("DOMContentLoaded", function() {
-    if (window.location.hostname !== 'localhost' && window.Swal) {
-      Swal.fire({
-        title: "Access Alert",
-        text: "You are not accessing the application from the standard 'localhost' origin. Would you like to redirect to the correct origin?",
-        icon: "warning",
-        showCancelButton: true,
-        confirmButtonColor: '#3085d6',
-        confirmButtonText: "Redirect",
-        cancelButtonText: "Stay here"
-      }).then((result) => {
-        if (result.isConfirmed) {
-          window.location.hostname = 'localhost';
-        }
-      });
-    }
-  });
-</script>
+<!-- <script> -->
+  <!-- document.addEventListener("DOMContentLoaded", function() { -->
+    <!-- if (window.location.hostname !== 'localhost' && window.Swal) { -->
+      <!-- Swal.fire({ -->
+        <!-- title: "Access Alert", -->
+        <!-- text: "You are not accessing the application from the standard 'localhost' origin. Would you like to redirect to the correct origin?", -->
+        <!-- icon: "warning", -->
+        <!-- showCancelButton: true, -->
+        <!-- confirmButtonColor: '#3085d6', -->
+        <!-- confirmButtonText: "Redirect", -->
+        <!-- cancelButtonText: "Stay here" -->
+      <!-- }).then((result) => { -->
+        <!-- if (result.isConfirmed) { -->
+          <!-- window.location.hostname = 'localhost'; -->
+        <!-- } -->
+      <!-- }); -->
+    <!-- } -->
+  <!-- }); -->
+<!-- </script> -->
 {% endblock %}
